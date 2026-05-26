@@ -586,10 +586,14 @@ const WEST_KEYWORDS = [
   '白鳥台','緑台','林田町','打越','実法寺','菅生台','刀出',
   'たつの市龍野',
 ];
-// 遅番固定の地名（西エリアキーワードより優先）
-const EAST_FORCE_KEYWORDS = ['香寺町','山崎区','保城','青山南'];
+// 早番固定コース（バランシング時も遅番へ移動しない）
+const WEST_FORCE_KEYWORDS = ['広畑区','大津区','太子'];
+// 遅番固定の地名（西エリアキーワードより優先・バランシング時も早番へ移動しない）
+const EAST_FORCE_KEYWORDS = ['香寺町','山崎区','保城','青山南','神田町','八代'];
 
 function classifyArea(addr) {
+  // 早番固定キーワードが含まれる場合はwest固定（最優先）
+  if (WEST_FORCE_KEYWORDS.some(k => addr.includes(k))) return 'west';
   // 遅番強制キーワードが含まれる場合はlate固定
   if (EAST_FORCE_KEYWORDS.some(k => addr.includes(k))) return 'east';
   // 西エリアキーワードが含まれる場合はwest
@@ -831,21 +835,34 @@ function run(){
   // 東プールを距離順にソート（遠い順）
   eastPool.sort((a,b) => (b.dist||0)-(a.dist||0));
 
-  let earlyArr = [...westPool];
-  let lateArr  = [...eastPool];
+  // WEST_FORCE（早番固定）・EAST_FORCE（遅番固定）をバランシング前に分離
+  const earlyForced  = [...westPool, ...eastPool].filter(r => WEST_FORCE_KEYWORDS.some(k => (r.addr||'').includes(k)));
+  const earlyForcedRoutes = new Set(earlyForced.map(r => r.route));
+  let earlyArr = westPool.filter(r => !earlyForcedRoutes.has(r.route));
+  let lateArr  = eastPool.filter(r  => !earlyForcedRoutes.has(r.route));
+
+  // EAST_FORCE も分離（遅番固定）
+  const lateFixed2  = lateArr.filter(r =>  EAST_FORCE_KEYWORDS.some(k => (r.addr||'').includes(k)));
+  const lateFixed2Routes = new Set(lateFixed2.map(r => r.route));
+  lateArr = lateArr.filter(r => !lateFixed2Routes.has(r.route));
+
+  // 調整済みtarget（固定コース数を除いたうえで折半）
+  const adjustedTarget = Math.max(0, target - earlyForced.length);
 
   // 西が多すぎる場合：センターに近い順に遅番へ移動
-  while(earlyArr.length > target && earlyArr.length > 0){
+  while(earlyArr.length > adjustedTarget && earlyArr.length > 0){
     lateArr.push(earlyArr.shift()); // 距離近い順なのでshift()で近いものから
   }
   // 西が足りない場合：東から遠い順に早番へ補充（EAST_FORCE対象は除外）
   const lateMovable = lateArr.filter(r => !EAST_FORCE_KEYWORDS.some(k => (r.addr||'').includes(k)));
   const lateFixed   = lateArr.filter(r =>  EAST_FORCE_KEYWORDS.some(k => (r.addr||'').includes(k)));
   lateArr = lateMovable;
-  while(earlyArr.length < target && lateArr.length > 0){
+  while(earlyArr.length < adjustedTarget && lateArr.length > 0){
     earlyArr.push(lateArr.shift());
   }
-  lateArr = [...lateArr, ...lateFixed]; // EAST_FORCE対象を遅番に戻す
+  // 固定コースを元の配列に戻す
+  lateArr  = [...lateArr, ...lateFixed, ...lateFixed2]; // EAST_FORCE対象を遅番に戻す
+  earlyArr = [...earlyArr, ...earlyForced];              // WEST_FORCE対象を早番に戻す
 
   const earlyRoutes = earlyArr.map(r=>({...r,areaShift:'early'}));
   const lateRoutes  = lateArr.map(r=>({...r,areaShift:'late'}));
