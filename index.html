@@ -578,18 +578,16 @@ function normalizeStr(s) {
 
 // ─── 地名による西エリア判定 ──────────────────────
 // 西エリア（早番候補）の地名キーワード
-const WEST_KEYWORDS = [
-  '夢前','広畑区','勝原区','大津区','網干区',
-  '太子町','揖保郡','たつの市','相生市',
-  '御津町','新宮町','誉田',
-  '太市',
-  '白鳥台','緑台','林田町','打越','実法寺','菅生台','刀出',
-  'たつの市龍野',
+// ① 早番固定（距離・バランシング関係なく常に早番）
+const WEST_FORCE_KEYWORDS = [
+  '夢前','勝原区','網干区','太子町','揖保郡','たつの市','相生市',
+  '御津町','新宮町','誉田','太市',
+  '白鳥台','緑台','林田町','打越','実法寺','菅生台','刀出','たつの市龍野',
 ];
-// 早番固定コース（バランシング時も遅番へ移動しない）
-const WEST_FORCE_KEYWORDS = ['広畑区','大津区','太子'];
-// 遅番固定の地名（西エリアキーワードより優先・バランシング時も早番へ移動しない）
+// ② 遅番固定（距離・バランシング関係なく常に遅番）
 const EAST_FORCE_KEYWORDS = ['香寺町','山崎区','保城','青山南','神田町','八代'];
+// 後方互換（classifyArea用・実質未使用になるが残す）
+const WEST_KEYWORDS = WEST_FORCE_KEYWORDS;
 
 function classifyArea(addr) {
   // 早番固定キーワードが含まれる場合はwest固定（最優先）
@@ -825,47 +823,27 @@ function run(){
         routes.push({route,daName,packages:csvEntry.packages||0,serviceType:csvEntry.serviceType||"",postal,addr,areaVote,dist:calcCentroidDist(postalList)||postalToDist(postal),rushCount,amanCount,vipCount:vipMatches.length,vipNames:vipMatches.map(v=>v.name),vipInfo:vipMatches});
   }
 
-  // ② エリア判定：地名ベースで西/東を分類、距離で微調整
-  const westPool = routes.filter(r => r.areaVote === 'west');
-  const eastPool = routes.filter(r => r.areaVote === 'east');
+  // ② エリア振り分け：固定コースを先に分離し、残りを距離ベースで振り分け
   const target = Math.ceil(routes.length / 2); // 早番の目標コース数
 
-  // 西プールを距離順にソート（近い順）
-  westPool.sort((a,b) => (a.dist||99)-(b.dist||99));
-  // 東プールを距離順にソート（遠い順）
-  eastPool.sort((a,b) => (b.dist||0)-(a.dist||0));
+  // ① 早番固定
+  const earlyFixed = routes.filter(r => WEST_FORCE_KEYWORDS.some(k => (r.addr||'').includes(k)));
+  const earlyFixedSet = new Set(earlyFixed.map(r => r.route));
 
-  // WEST_FORCE（早番固定）・EAST_FORCE（遅番固定）をバランシング前に分離
-  const earlyForced  = [...westPool, ...eastPool].filter(r => WEST_FORCE_KEYWORDS.some(k => (r.addr||'').includes(k)));
-  const earlyForcedRoutes = new Set(earlyForced.map(r => r.route));
-  let earlyArr = westPool.filter(r => !earlyForcedRoutes.has(r.route));
-  let lateArr  = eastPool.filter(r  => !earlyForcedRoutes.has(r.route));
+  // ② 遅番固定（早番固定と重複しない）
+  const lateFixed = routes.filter(r => !earlyFixedSet.has(r.route) && EAST_FORCE_KEYWORDS.some(k => (r.addr||'').includes(k)));
+  const lateFixedSet = new Set(lateFixed.map(r => r.route));
 
-  // EAST_FORCE も分離（遅番固定）
-  const lateFixed2  = lateArr.filter(r =>  EAST_FORCE_KEYWORDS.some(k => (r.addr||'').includes(k)));
-  const lateFixed2Routes = new Set(lateFixed2.map(r => r.route));
-  lateArr = lateArr.filter(r => !lateFixed2Routes.has(r.route));
+  // ③+④ 残り：センターから遠い順にソートして早番枠を埋める
+  const remaining = routes.filter(r => !earlyFixedSet.has(r.route) && !lateFixedSet.has(r.route));
+  remaining.sort((a, b) => (b.dist||0) - (a.dist||0)); // 遠い順
 
-  // 調整済みtarget（固定コース数を除いたうえで折半）
-  const adjustedTarget = Math.max(0, target - earlyForced.length);
+  const earlyTarget = Math.max(0, target - earlyFixed.length);
+  const earlyArr = remaining.slice(0, earlyTarget);
+  const lateArr  = remaining.slice(earlyTarget);
 
-  // 西が多すぎる場合：センターに近い順に遅番へ移動
-  while(earlyArr.length > adjustedTarget && earlyArr.length > 0){
-    lateArr.push(earlyArr.shift()); // 距離近い順なのでshift()で近いものから
-  }
-  // 西が足りない場合：東から遠い順に早番へ補充（EAST_FORCE対象は除外）
-  const lateMovable = lateArr.filter(r => !EAST_FORCE_KEYWORDS.some(k => (r.addr||'').includes(k)));
-  const lateFixed   = lateArr.filter(r =>  EAST_FORCE_KEYWORDS.some(k => (r.addr||'').includes(k)));
-  lateArr = lateMovable;
-  while(earlyArr.length < adjustedTarget && lateArr.length > 0){
-    earlyArr.push(lateArr.shift());
-  }
-  // 固定コースを元の配列に戻す
-  lateArr  = [...lateArr, ...lateFixed, ...lateFixed2]; // EAST_FORCE対象を遅番に戻す
-  earlyArr = [...earlyArr, ...earlyForced];              // WEST_FORCE対象を早番に戻す
-
-  const earlyRoutes = earlyArr.map(r=>({...r,areaShift:'early'}));
-  const lateRoutes  = lateArr.map(r=>({...r,areaShift:'late'}));
+  const earlyRoutes = [...earlyFixed, ...earlyArr].map(r=>({...r,areaShift:'early'}));
+  const lateRoutes  = [...lateFixed,  ...lateArr ].map(r=>({...r,areaShift:'late'}));
 
   // シフト照合
   let mismatches=[];
