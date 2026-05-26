@@ -566,6 +566,9 @@ function normalizeStr(s) {
     .replace(/[ァ-ン]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60))
     // スペース・全角スペース・カンマ除去
     .replace(/[ 　,、]/g, '')
+    // 小文字カナ→大文字カナ（ウィ→ウイ、ディ→ディなど表記ゆれ対応）
+    .replace(/ァ/g,'ア').replace(/ィ/g,'イ').replace(/ゥ/g,'ウ').replace(/ェ/g,'エ').replace(/ォ/g,'オ')
+    .replace(/ッ/g,'ツ').replace(/ャ/g,'ヤ').replace(/ュ/g,'ユ').replace(/ョ/g,'ヨ')
     // ハイフン系を統一
     .replace(/[－ー−‐]/g, '-')
     // 敬称除去（様・さん・氏・殿・ご家族）
