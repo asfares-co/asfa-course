@@ -874,11 +874,24 @@ function run(){
   }
   const unpaired=mismatches.filter(r=>!paired.has(r.route));
 
+  // ── 自動スワップ：ペアが揃った不一致はここで即適用 ──
+  let autoSwapCount=0;
+  if(hasShift && swapPairs.length>0){
+    for(const {a,b} of swapPairs){
+      const rA=lateRoutes.find(r=>r.route===a.route);    // 遅番エリアにいる早番DA
+      const rB=earlyRoutes.find(r=>r.route===b.route);   // 早番エリアにいる遅番DA
+      if(rA&&rB){const tmp=rA.daName;rA.daName=rB.daName;rB.daName=tmp;autoSwapCount++;}
+    }
+    // 自動適用後は不一致リストをクリア（ペア済みのみ）
+    mismatches=unpaired; // 未ペアの不一致だけ残す
+  }
+
   const daChanges=[];
 
   lastResult={earlyRoutes,lateRoutes,mismatches,swapPairs,unpaired,daChanges,routes:[...earlyRoutes,...lateRoutes],allRoutes:[...earlyRoutes,...lateRoutes]};
 
-  renderSwaps(swapPairs,unpaired,hasShift);
+  if(autoSwapCount>0) setStatus(`✅ シフト不一致 ${autoSwapCount}件を自動修正しました`,'ok');
+  renderSwaps([],unpaired,hasShift); // 自動適用済みなのでswapPairsは表示不要
   renderResult(earlyRoutes,lateRoutes,mismatches,daChanges);
 
   document.getElementById('legend').style.display='flex';
